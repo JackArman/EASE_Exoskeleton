@@ -1,0 +1,6 @@
+{
+    "idf.pythonInstallPath": "/usr/bin/python3",
+    "idf.port": "/dev/ttyUSB0",
+    "idf.monitorPort": "/dev/ttyUSB0",
+    "C_Cpp.errorSquiggles": "enabled"
+}

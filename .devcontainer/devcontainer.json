@@ -1,0 +1,24 @@
+{
+  "name": "ESP-IDF",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+
+  "runArgs": [
+      "--privileged",
+      "-v", "/dev:/dev"
+  ],
+  // Pre-configure ESP-IDF extension
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "idf.showOnboardingOnInit": false,
+        "idf.toolsPath": "/opt/esp",
+        "idf.espIdfPath": "/opt/esp/idf",
+        "terminal.integrated.shell.linux": "/bin/bash"
+      }
+    }
+  },
+  // Install relevant extensions in the dev container
+  "userEnvProbe": "loginInteractiveShell"
+}
