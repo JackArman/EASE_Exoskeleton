@@ -176,5 +176,5 @@ void loop() {
       break;
   }
   // adjust delay if needed
-  delay(200); // ~50 Hz control loop
+  delay(50); // ~50 Hz control loop
 }
