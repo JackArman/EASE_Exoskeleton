@@ -10,11 +10,11 @@ unsigned long lastDebounceTime = 0;
 const unsigned long debounceDelay = 200;
 
 // arbitary points to define our different stages
-int dataCheckpoints[5] = {9, 29, 49, 59, 99};
+int dataCheckpoints[5] = {9, 29, 49, 59, 100};
 bool justReachedCheckpoint = false;
 
 struct can_frame canMsg;
-MCP2515 mcp2515(5);
+MCP2515 mcp2515(2);
 
 /*
 knee:
@@ -84,6 +84,8 @@ double R_hip[GAIT_LENGTH] = {
 int LgaitIndex = 0;
 int RgaitIndex = 51;
 int legHipOffset = 90;
+
+float power = 
 
 
 // Unique motor IDs (replace with actual IDs)
