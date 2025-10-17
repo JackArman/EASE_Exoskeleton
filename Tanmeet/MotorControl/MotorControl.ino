@@ -10,16 +10,35 @@ unsigned long lastDebounceTime = 0;
 const unsigned long debounceDelay = 200;
 
 // arbitary points to define our different stages
-int dataCheckpoints[2] = {51, 101};
+int dataCheckpoints[5] = {9, 29, 49, 59, 99};
 bool justReachedCheckpoint = false;
 
 struct can_frame canMsg;
 MCP2515 mcp2515(5);
 
-enum GaitState {
+/*
+knee:
+Initial Contact (IC)    0 – 9
+Mid Stance (MS)    10 – 29
+Terminal Stance (TS)    30 – 49
+Pre Swing (PS)    50 – 59
+Swing (SW)    60 – 99
 
-  SWING_UP,
-  SWING_DOWN,
+hip:
+Initial Contact (IC)    0 – 9
+Mid Stance (MS)    10 – 29
+Terminal Stance (TS)    30 – 49
+Pre Swing (PS)    50 – 59
+Swing (SW)    60 – 99
+
+*/
+
+enum GaitState {
+  INITIAL_CONTACT,
+  MID_STANCE,
+  TERMINAL_STANCE,
+  PRE_SWING,
+  SWING,
   INITIAL
 };
 
@@ -32,18 +51,39 @@ float kd = 2.0;
 float torque_ff = 2.0;
   
 #define GAIT_LENGTH 101
-double L_knee[GAIT_LENGTH] = {0.064467, 0.074331, 0.093322, 0.118156, 0.145765, 0.173782, 0.200732, 0.225926, 0.249164, 0.270381, 0.289373, 0.305691, 0.318736, 0.327958, 0.333073, 0.334175, 0.331732, 0.326490, 0.319331, 0.311129, 0.302627, 0.294319, 0.286371, 0.278621, 0.270692, 0.262185, 0.252879, 0.242834, 0.232383, 0.222038, 0.212359, 0.203835, 0.196767, 0.191192, 0.186847, 0.183235, 0.179761, 0.175892, 0.171276, 0.165752, 0.159294, 0.151928, 0.143711, 0.134770, 0.125387, 0.116065, 0.107502, 0.100468, 0.095640, 0.093459, 0.094056, 0.097284, 0.102846, 0.110498, 0.120221, 0.132296, 0.147250, 0.165738, 0.188439, 0.215986, 0.248939, 0.287736, 0.332620, 0.383527, 0.439959, 0.500893, 0.564828, 0.630043, 0.694954, 0.758340, 0.819280, 0.876881, 0.930024, 0.977325, 1.017316, 1.048739, 1.070786, 1.083212, 1.086280, 1.080587, 1.066864, 1.045814, 1.018047, 0.984064, 0.944284, 0.899057, 0.848651, 0.793217, 0.732766, 0.667199, 0.596433, 0.520656, 0.440760, 0.358855, 0.278567, 0.204591, 0.141522, 0.092671, 0.059562, 0.042007, 0.038405};
-double L_hip[GAIT_LENGTH] = {0.289862, 0.294106, 0.299675, 0.305515, 0.310784, 0.314967, 0.317822, 0.319227, 0.319036, 0.317008, 0.312815, 0.306110, 0.296648, 0.284423, 0.269742, 0.253211, 0.235617, 0.217761, 0.200304, 0.183673, 0.168035, 0.153324, 0.139305, 0.125649, 0.112010, 0.098116, 0.083820, 0.069120, 0.054131, 0.039038, 0.024051, 0.009396, -0.004705, -0.018052, -0.030488, -0.041909, -0.052281, -0.061665, -0.070250, -0.078398, -0.086628, -0.095527, -0.105598, -0.117101, -0.129972, -0.143842, -0.158155, -0.172330, -0.185914, -0.198666, -0.210577, -0.221803, -0.232542, -0.242877, -0.252683, -0.261621, -0.269205, -0.274901, -0.278197, -0.278642, -0.275855, -0.269508, -0.259313, -0.245034, -0.226550, -0.203951, -0.177646, -0.148385, -0.117162, -0.085016, -0.052805, -0.021057, 0.010050, 0.040595, 0.070755, 0.100649, 0.130239, 0.159319, 0.187544, 0.214489, 0.239725, 0.262917, 0.283915, 0.302772, 0.319662, 0.334727, 0.347929, 0.358969, 0.367321, 0.372359, 0.373525, 0.370504, 0.363396, 0.352850, 0.340090, 0.326739, 0.314464, 0.304605, 0.297928, 0.294529, 0.293879};
 
 
-// Note we are simply using the right knee/hip data arrays
-double R_knee[GAIT_LENGTH] = {0.039173, 0.059021, 0.085967, 0.115610, 0.144314, 0.169891, 0.191788, 0.210720, 0.227946, 0.244510, 0.260765, 0.276288, 0.290163, 0.301404, 0.309336, 0.313789, 0.315066, 0.313749, 0.310455, 0.305674, 0.299740, 0.292881, 0.285280, 0.277085, 0.268387, 0.259220, 0.249582, 0.239484, 0.228979, 0.218164, 0.207169, 0.196120, 0.185119, 0.174242, 0.163575, 0.153282, 0.143645, 0.135032, 0.127776, 0.122043, 0.117765, 0.114696, 0.112556, 0.111165, 0.110518, 0.110768, 0.112159, 0.114934, 0.119250, 0.125131, 0.132526, 0.141447, 0.152124, 0.165032, 0.180784, 0.199944, 0.222902, 0.249841, 0.280827, 0.315940, 0.355357, 0.399288, 0.447811, 0.500702, 0.557384, 0.616989, 0.678434, 0.740430, 0.801478, 0.859921, 0.914084, 0.962450, 1.003836, 1.037468, 1.062958, 1.080177, 1.089130, 1.089876, 1.082515, 1.067232, 1.044349, 1.014357, 0.977879, 0.935595, 0.888165, 0.836206, 0.780312, 0.721086, 0.659118, 0.594912, 0.528814, 0.461043, 0.391888, 0.322092, 0.253307, 0.188328, 0.130832, 0.084629, 0.052771, 0.036826, 0.036496};
-double R_hip[GAIT_LENGTH] = {0.330710, 0.336243, 0.342093, 0.346828, 0.349355, 0.349147, 0.346295, 0.341347, 0.335008, 0.327803, 0.319869, 0.310954, 0.300598, 0.288403, 0.274250, 0.258375, 0.241274, 0.223518, 0.205571, 0.187704, 0.170029, 0.152584, 0.135401, 0.118501, 0.101854, 0.085359, 0.068890, 0.052363, 0.035805, 0.019357, 0.003225, -0.012408, -0.027455, -0.041935, -0.055917, -0.069412, -0.082317, -0.094431, -0.105567, -0.115683, -0.124958, -0.133761, -0.142530, -0.151609, -0.161121, -0.170927, -0.180683, -0.189985, -0.198526, -0.206199, -0.213080, -0.219312, -0.224949, -0.229848, -0.233664, -0.235952, -0.236298, -0.234403, -0.230068, -0.223136, -0.213446, -0.200851, -0.185285, -0.166822, -0.145656, -0.122032, -0.096169, -0.068275, -0.038644, -0.007752, 0.023762, 0.055214, 0.086032, 0.115859, 0.144572, 0.172211, 0.198860, 0.224518, 0.249010, 0.271981, 0.292979, 0.311585, 0.327532, 0.340792, 0.351604, 0.360427, 0.367799, 0.374125, 0.379469, 0.383465, 0.385413, 0.384554, 0.380432, 0.373177, 0.363612, 0.353111, 0.343296, 0.335672, 0.331301, 0.330586, 0.333183};
+double R_knee[GAIT_LENGTH] = {
+0.037000, 0.052771, 0.084629, 0.130832, 0.188328, 0.253307, 0.322092, 0.391888, 0.461043, 0.528814,
+0.594912, 0.659118, 0.721086, 0.780312, 0.836206, 0.888165, 0.935595, 0.977879, 1.014357, 1.044349,
+1.067232, 1.082515, 1.089876, 1.089130, 1.080177, 1.062958, 1.037468, 1.003836, 0.962450, 0.914084,
+0.859921, 0.801478, 0.740430, 0.678434, 0.616989, 0.557384, 0.500702, 0.447811, 0.399288, 0.355357,
+0.315940, 0.280827, 0.249841, 0.222902, 0.199944, 0.180784, 0.165032, 0.152124, 0.141447, 0.132526,
+0.125131, 0.119250, 0.114934, 0.112159, 0.110768, 0.110518, 0.111165, 0.112556, 0.114696, 0.117765,
+0.122043, 0.127776, 0.135032, 0.143645, 0.153282, 0.163575, 0.174242, 0.185119, 0.196120, 0.207169,
+0.218164, 0.228979, 0.239484, 0.249582, 0.259220, 0.268387, 0.277085, 0.285280, 0.292881, 0.299740,
+0.305674, 0.310455, 0.313749, 0.315066, 0.313789, 0.309336, 0.301404, 0.290163, 0.276288, 0.260765,
+0.244510, 0.227946, 0.210720, 0.191788, 0.169891, 0.144314, 0.115610, 0.085967, 0.059021, 0.039173
+};
+
+double R_hip[GAIT_LENGTH] = {
+0.330000, 0.331301, 0.335672, 0.343296, 0.353111, 0.363612, 0.373177, 0.380432, 0.384554, 0.385413,
+0.383465, 0.379469, 0.374125, 0.367799, 0.360427, 0.351604, 0.340792, 0.327532, 0.311585, 0.292979,
+0.271981, 0.249010, 0.224518, 0.198860, 0.172211, 0.144572, 0.115859, 0.086032, 0.055214, 0.023762,
+-0.007752, -0.038644, -0.068275, -0.096169, -0.122032, -0.145656, -0.166822, -0.185285, -0.200851, -0.213446,
+-0.223136, -0.230068, -0.234403, -0.236298, -0.235952, -0.233664, -0.229848, -0.224949, -0.219312, -0.213080,
+-0.206199, -0.198526, -0.189985, -0.180683, -0.170927, -0.161121, -0.151609, -0.142530, -0.133761, -0.124958,
+-0.115683, -0.105567, -0.094431, -0.082317, -0.069412, -0.055917, -0.041935, -0.027455, -0.012408, 0.003225,
+0.019357, 0.035805, 0.052363, 0.068890, 0.085359, 0.101854, 0.118501, 0.135401, 0.152584, 0.170029,
+0.187704, 0.205571, 0.223518, 0.241274, 0.258375, 0.274250, 0.288403, 0.300598, 0.310954, 0.319869,
+0.327803, 0.335008, 0.341347, 0.346295, 0.349147, 0.349355, 0.346828, 0.342093, 0.336243, 0.330710
+};
+
 
 
 int LgaitIndex = 0;
 int RgaitIndex = 51;
-
+int legHipOffset = 90;
 
 
 // Unique motor IDs (replace with actual IDs)
@@ -101,13 +141,18 @@ void loopIdle() {
 
 }
 
+int getKneeOffset(int index) {
+  return (index + legHipOffset) % GAIT_LENGTH;
+}
 // setup to first position
 int i = 0;
 void loopInitial() {
+  int LkneeIndex = getKneeOffset(LgaitIndex);
+  int RkneeIndex = getKneeOffset(RgaitIndex);
   sendMITCommand(-(R_hip[LgaitIndex] + 0.02) * i/20,  v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_HIP);
-  sendMITCommand(-(R_knee[LgaitIndex] * .8) * i/20, v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_KNEE);
+  sendMITCommand(-(R_knee[LkneeIndex] * .8) * i/20, v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_KNEE);
   sendMITCommand((R_hip[RgaitIndex] + 0.02) * i/20, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_HIP);
-  sendMITCommand((R_knee[RgaitIndex] * .8) * i/20,v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE);
+  sendMITCommand((R_knee[RkneeIndex] * .8) * i/20,v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE);
   i++;
   if (i == 20) {
     // keep at datapoint 19 until state transitions
@@ -118,11 +163,22 @@ void loopInitial() {
 }
 
 void loopData() {
-    sendMITCommand(-(R_hip[LgaitIndex] + 0.02),  v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_HIP);
-    sendMITCommand(-(R_knee[LgaitIndex] * .8), v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_KNEE);
-    sendMITCommand((R_hip[RgaitIndex] + 0.02), v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_HIP);
-    sendMITCommand((R_knee[RgaitIndex] * .8),v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE);
+  int LkneeIndex = getKneeOffset(LgaitIndex);
+  int RkneeIndex = getKneeOffset(RgaitIndex);
+  sendMITCommand(-(R_hip[LgaitIndex] * 1.3),  v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_HIP);
+  sendMITCommand(-(R_knee[LkneeIndex] * .7) * 1.3, v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_KNEE);
+  sendMITCommand((R_hip[RgaitIndex] * 1.3), v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_HIP);
+  sendMITCommand((R_knee[RkneeIndex] * .7) * 1.3,v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE);
 
+}
+
+void reachedCheckpoint(int setpoint) {
+  if (LgaitIndex != dataCheckpoints[setpoint]) {
+    LgaitIndex = (LgaitIndex + 1) % GAIT_LENGTH;
+    RgaitIndex = (RgaitIndex + 1) % GAIT_LENGTH;   
+  } else {
+    justReachedCheckpoint = true;
+  }
 }
 
 void loop() {
@@ -141,40 +197,36 @@ void loop() {
   lastButtonState = reading;
 
   below can simply add justReacheCheckpoint && buttonRead) for a combination
+  
   */
   if (justReachedCheckpoint) {
-    // logic should switch between swing up and swing down states toggle between and 0 1
-    curState = (GaitState)((curState + 1) % 2);
+    if (curState == INITIAL) {
+      curState = INITIAL_CONTACT;
+    } else {
+      // logic should switch between swing up and swing down states toggle between and 0 1
+      curState = (GaitState)((curState + 1) % 5);
+    }
+
     Serial.print("Switched to state: ");
     Serial.println(curState);
     justReachedCheckpoint = true;
   }
   // 
 
-  switch (curState) {
-    case INITIAL:
-      loopInitial();
-      break;
-    case SWING_UP:
-      loopData();
-      if (LgaitIndex != dataCheckpoints[0]) {
-        LgaitIndex = (LgaitIndex + 1) % GAIT_LENGTH;
-        RgaitIndex = (RgaitIndex + 1) % GAIT_LENGTH;    
-      } else {
-        justReachedCheckpoint = true;
-      }
-      break;
-
-    case SWING_DOWN:
-      loopData();
-      if (LgaitIndex != dataCheckpoints[1]) {
-        LgaitIndex = (LgaitIndex + 1) % GAIT_LENGTH;
-        RgaitIndex = (RgaitIndex + 1) % GAIT_LENGTH;      
-      } else {
-        justReachedCheckpoint = true;
-      }
-      break;
+/*
+  INITIAL_CONTACT,
+  MID_STANCE,
+  TERMINAL_STANCE,
+  PRE_SWING,
+  SWING,
+*/
+  if (curState == INITIAL) {
+    loopInitial();
+  } else {
+    loopData();
+    reachedCheckpoint(curState);
   }
+
   // adjust delay if needed
   delay(50); // ~50 Hz control loop
 }
