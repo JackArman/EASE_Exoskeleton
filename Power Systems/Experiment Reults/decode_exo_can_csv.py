@@ -13,7 +13,7 @@ import csv
 from pathlib import Path
 
 # >>> EDIT THIS LINE: put your CSV path here (leave "" to use CLI argument)
-DEFAULT_INPUT_PATH = r"C:\Users\india\OneDrive\Desktop\Thesis\Experiment Reults\Experiment1\gait_data_log_20251111_173516.csv"  # e.g., r"C:\Users\you\Desktop\input.csv" or r"/home/you/input.csv"
+DEFAULT_INPUT_PATH = r"C:\Users\india\Downloads\thesis\EASE_Exoskeleton\Power Systems\Experiment Reults\Experiment1-2\gait_data_log_20251112_135753.csv"  # e.g., r"C:\Users\you\Desktop\input.csv" or r"/home/you/input.csv"
 
 MOTOR_ORDER = ["RightHip", "RightKnee", "LeftKnee", "LeftHip"]
 

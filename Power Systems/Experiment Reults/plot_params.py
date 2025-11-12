@@ -21,7 +21,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 DEFAULT_INPUT  = Path(__file__).parent / "Experiment1" / "gait_data_log_20251111_173516_decoded.csv"
-DEFAULT_OUTDIR = Path(__file__).parent / "Experiment1"
+DEFAULT_OUTDIR = Path(__file__).parent / "Experiment1-2"
 
 MOTOR_NAMES = {
     "hip":  ("RightHip", "LeftHip"),
