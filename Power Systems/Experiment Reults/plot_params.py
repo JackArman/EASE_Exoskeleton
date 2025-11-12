@@ -71,11 +71,11 @@ def pick_speed_columns(df, pole_pairs):
 def shift_series(s, n):
     return s.shift(n) if n else s
 
-def plot_pair(df, right_name, left_name, y_right, y_left, x, title, ylabel, out_path):
+def plot_pair(df, right_name, left_name, y_right, y_left, x, title, ylabel, out_path, x_label):
     plt.figure(figsize=(12, 6))
     plt.plot(x, y_right, label=right_name)
     plt.plot(x, y_left,  label=left_name)
-    plt.xlabel("TimeStep" if "TimeStep" in df.columns else "Sample")
+    plt.xlabel(x_label)
     plt.ylabel(ylabel)
     plt.title(title)
     plt.legend()
@@ -105,8 +105,16 @@ def main():
 
     df = pd.read_csv(args.input)
 
-    # X-axis
-    x = df["TimeStep"] if "TimeStep" in df.columns else df.index
+    # ==== X-axis: prefer Elapsed_us (→ seconds), else TimeStep, else index ====
+    if "Elapsed_us" in df.columns:
+        x = df["Elapsed_us"] * 1e-6
+        x_label = "Time (s)"
+    elif "TimeStep" in df.columns:
+        x = df["TimeStep"]
+        x_label = "TimeStep"
+    else:
+        x = df.index
+        x_label = "Sample"
 
     # Downsample index for speed
     idx = slice(None, None, args.downsample)
@@ -146,7 +154,7 @@ def main():
                 out = args.outdir / f"{group_key.capitalize()}_MechRPM.png" if "Mechanical" in speed_label \
                       else args.outdir / f"{group_key.capitalize()}_ElecRPM.png"
 
-                plot_pair(df, right, left, r[idx], l[idx], x, title, speed_label, out)
+                plot_pair(df, right, left, r[idx], l[idx], x, title, speed_label, out, x_label)
     else:
         print("Speed columns not found; skipping RPM plots.")
 
@@ -159,7 +167,7 @@ def main():
             l = df[lcol]
             title = f"{group_key.capitalize()} Current"
             out = args.outdir / f"{group_key.capitalize()}_CurrentA.png"
-            plot_pair(df, right, left, r[idx], l[idx], x, title, "Current (A)", out)
+            plot_pair(df, right, left, r[idx], l[idx], x, title, "Current (A)", out, x_label)
         else:
             print(f"Current columns missing for {group_key}; skipping.")
 
@@ -172,7 +180,7 @@ def main():
             l = df[lcol]
             title = f"{group_key.capitalize()} Temperature"
             out = args.outdir / f"{group_key.capitalize()}_Temperature.png"
-            plot_pair(df, right, left, r[idx], l[idx], x, title, "Temperature (°C)", out)
+            plot_pair(df, right, left, r[idx], l[idx], x, title, "Temperature (°C)", out, x_label)
         else:
             print(f"Temperature columns missing for {group_key}; skipping.")
 
@@ -185,7 +193,7 @@ def main():
             l = df[lcol]
             title = f"{group_key.capitalize()} Position"
             out = args.outdir / f"{group_key.capitalize()}_PositionDeg.png"
-            plot_pair(df, right, left, r[idx], l[idx], x, title, "Position (deg)", out)
+            plot_pair(df, right, left, r[idx], l[idx], x, title, "Position (deg)", out, x_label)
         else:
             print(f"Position columns missing for {group_key}; skipping.")
 

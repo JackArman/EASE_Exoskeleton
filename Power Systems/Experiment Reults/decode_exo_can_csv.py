@@ -2,10 +2,11 @@
 """
 Decode CubeMars CAN feedback bytes logged by the Arduino gait script.
 
-Usage (CLI as before):
-  python decode_exo_can_csv.py input.csv -o decoded.csv --pole-pairs 7
+STRICT: expects rows with Elapsed_us:
+  [TimeStep, Elapsed_us, L_idx, R_idx, 32 bytes...]
 
-Or just set DEFAULT_INPUT_PATH below and run without CLI args.
+Usage:
+  python decode_exo_can_csv.py input.csv -o decoded.csv --pole-pairs 7
 """
 
 import argparse
@@ -13,7 +14,7 @@ import csv
 from pathlib import Path
 
 # >>> EDIT THIS LINE: put your CSV path here (leave "" to use CLI argument)
-DEFAULT_INPUT_PATH = r"C:\Users\india\Downloads\thesis\EASE_Exoskeleton\Power Systems\Experiment Reults\Experiment1-2\gait_data_log_20251112_135753.csv"  # e.g., r"C:\Users\you\Desktop\input.csv" or r"/home/you/input.csv"
+DEFAULT_INPUT_PATH = r"C:\Users\india\Downloads\thesis\EASE_Exoskeleton\Power Systems\Experiment Reults\gait_data_log_20251112_144050.csv"
 
 MOTOR_ORDER = ["RightHip", "RightKnee", "LeftKnee", "LeftHip"]
 
@@ -57,85 +58,97 @@ def decode_block(block8):
 def maybe_mech_rpm(spd_erpm, pole_pairs):
     return (spd_erpm / float(pole_pairs)) if pole_pairs else None
 
+def _parse_row_strict_elapsed(row):
+    """
+    STRICT parser: require
+      [TimeStep, Elapsed_us, L_idx, R_idx, 32 bytes...]
+
+    Returns (timestep:int, elapsed_us:int, L_idx:int, R_idx:int, bytes32:list[int]) or None.
+    """
+    row = [x.strip() for x in row if x.strip() != ""]
+    if not row:
+        return None
+
+    # Skip header row if present (must start with 'TimeStep')
+    if row[0].lower() == "timestep":
+        return None
+
+    # Need at least 36 fields: 4 scalars + 32 bytes
+    if len(row) < 36:
+        return None
+
+    try:
+        timestep    = int(row[0])
+        elapsed_us  = int(row[1])
+        L_idx       = int(row[2])
+        R_idx       = int(row[3])
+
+        bytes_str   = row[4:4+32]
+        if len(bytes_str) != 32:
+            return None
+
+        bytes_all = [int(b) for b in bytes_str]
+        if any((b < 0 or b > 255) for b in bytes_all):
+            return None
+
+        return (timestep, elapsed_us, L_idx, R_idx, bytes_all)
+
+    except (ValueError, IndexError):
+        return None
+
 def main():
     ap = argparse.ArgumentParser()
-    # If DEFAULT_INPUT_PATH is set, make the positional arg optional and default to it
     if DEFAULT_INPUT_PATH:
         ap.add_argument("input_csv", nargs="?", type=Path, default=Path(DEFAULT_INPUT_PATH))
     else:
         ap.add_argument("input_csv", type=Path)
 
-    ap.add_argument("-o", "--output", type=Path, default=None, help="Output CSV (default: <input>_decoded.csv)")
+    ap.add_argument("-o", "--output", type=Path, default=None,
+                    help="Output CSV (default: <input>_decoded.csv)")
     ap.add_argument("--pole-pairs", type=int, default=21,
                     help="Pole pairs for mechanical RPM conversion (e.g., 7)")
 
     args = ap.parse_args()
-
     out_path = args.output or args.input_csv.with_name(args.input_csv.stem + "_decoded.csv")
 
     with args.input_csv.open("r", newline="") as f_in, out_path.open("w", newline="") as f_out:
         reader = csv.reader(f_in)
         writer = csv.writer(f_out)
 
-        base_cols = ["TimeStep", "L_Gait_Index", "R_Gait_Index"]
+        # Output header NOW includes Elapsed_us
+        base_cols = ["TimeStep", "Elapsed_us", "L_Gait_Index", "R_Gait_Index"]
         motor_cols = []
         for m in MOTOR_ORDER:
-            motor_cols += [
-                f"{m}_pos_deg",
-                f"{m}_spd_eRPM",
-            ]
+            motor_cols += [f"{m}_pos_deg", f"{m}_spd_eRPM"]
             if args.pole_pairs:
                 motor_cols += [f"{m}_spd_mech_RPM"]
-            motor_cols += [
-                f"{m}_current_A",
-                f"{m}_temp_C",
-                f"{m}_err_code",
-                f"{m}_err_text",
-            ]
+            motor_cols += [f"{m}_current_A", f"{m}_temp_C", f"{m}_err_code", f"{m}_err_text"]
         writer.writerow(base_cols + motor_cols)
 
-        first = True
         for row in reader:
-            if not row:
-                continue
-            if first and row[0].strip().lower() == "timestep":
-                first = False
-                continue
-            first = False
+            parsed = _parse_row_strict_elapsed(row)
+            if parsed is None:
+                continue  # skip anything that isn't strict-elapsed layout
 
-            if len(row) < 3 + 32:
-                # Skip legacy/short rows gracefully
-                continue
-
-            try:
-                timestep = int(row[0]); L_idx = int(row[1]); R_idx = int(row[2])
-            except ValueError:
-                continue
-
-            try:
-                bytes_all = list(map(int, row[3:3+32]))
-            except ValueError:
-                continue
+            timestep, elapsed_us, L_idx, R_idx, bytes_all = parsed
 
             decoded = []
             for mi, _motor in enumerate(MOTOR_ORDER):
                 blk = bytes_all[mi*8:(mi+1)*8]
+                if len(blk) != 8:
+                    decoded = None
+                    break
                 dd = decode_block(blk)
                 mech_rpm = maybe_mech_rpm(dd["spd_erpm"], args.pole_pairs)
-                decoded.extend([
-                    round(dd["pos_deg"], 3),
-                    round(dd["spd_erpm"], 3),
-                ])
+                decoded.extend([round(dd["pos_deg"], 3), round(dd["spd_erpm"], 3)])
                 if args.pole_pairs:
                     decoded.append(round(mech_rpm, 3))
-                decoded.extend([
-                    round(dd["cur_A"], 3),
-                    int(dd["temp_C"]),
-                    int(dd["err_code"]),
-                    dd["err_text"],
-                ])
+                decoded.extend([round(dd["cur_A"], 3), int(dd["temp_C"]), int(dd["err_code"]), dd["err_text"]])
 
-            writer.writerow([timestep, L_idx, R_idx] + decoded)
+            if decoded is None:
+                continue
+
+            writer.writerow([timestep, elapsed_us, L_idx, R_idx] + decoded)
 
     print(f"Wrote: {out_path}")
 
