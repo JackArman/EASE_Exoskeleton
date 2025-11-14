@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 def main():
-    ap = argparse.ArgumentParser(description="Plot OWON CSV logs")
+    ap = argparse.ArgumentParser(description="Plot OWON CSV logs + torque estimation")
     ap.add_argument("csv", help="Path to owon_log_YYYYMMDD_HHMMSS.csv")
     ap.add_argument("--time", choices=["iso_time", "epoch_s"], default="iso_time",
                     help="Which time column to use on x-axis (default: iso_time)")
@@ -35,19 +35,32 @@ def main():
         x = pd.to_datetime(df["epoch_s"], unit="s", errors="coerce")
         x_label = "Time (from epoch)"
 
-    y = df["value"]
+    current = df["value"]
 
     # Optional smoothing
     if args.rolling and args.rolling > 1:
-        y = y.rolling(args.rolling, min_periods=1, center=False).mean()
+        current = current.rolling(args.rolling, min_periods=1, center=False).mean()
 
-    # Plot
-    plt.figure()  # single plot, no specific colors/styles per your environment
-    plt.plot(x, y)
-    plt.xlabel(x_label)
-    plt.ylabel("Measurement")
-    plt.title(f"OWON Log: {csv_path.name}")
-    plt.grid(True)
+    # --- Torque calculation ---
+    Kt = 0.16  # N·m per amp (AK10-9 KV60)
+    torque = current * Kt
+
+    # --- Plot: two stacked subplots ---
+    fig, axs = plt.subplots(2, 1, sharex=True, figsize=(10, 6))
+
+    axs[0].plot(x, current, label="Current (A)")
+    axs[0].set_ylabel("Amperage [A]")
+    axs[0].grid(True)
+    axs[0].legend(loc="upper right")
+
+    axs[1].plot(x, torque, color="orange", label=f"Torque (N·m) = {Kt:.3f} × Current(A)")
+    axs[1].set_xlabel(x_label)
+    axs[1].set_ylabel("Torque [N·m]")
+    axs[1].grid(True)
+    axs[1].legend(loc="upper right")
+
+    plt.suptitle(f"OWON Log: {csv_path.name}")
+    plt.tight_layout()
 
     if args.save:
         out_png = csv_path.with_suffix(".png")

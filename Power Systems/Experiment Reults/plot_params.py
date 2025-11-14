@@ -20,7 +20,7 @@ import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 
-DEFAULT_INPUT  = Path(__file__).parent / "Experiment1" / "gait_data_log_20251111_173516_decoded.csv"
+DEFAULT_INPUT  = Path(__file__).parent / "Experiment1-2" / "gait_data_log_20251112_144050_decoded.csv"
 DEFAULT_OUTDIR = Path(__file__).parent / "Experiment1-2"
 
 MOTOR_NAMES = {
@@ -196,6 +196,36 @@ def main():
             plot_pair(df, right, left, r[idx], l[idx], x, title, "Position (deg)", out, x_label)
         else:
             print(f"Position columns missing for {group_key}; skipping.")
+
+    # ============ TORQUE (N·m) from Current (ADDED) ============
+    # Build a seconds x-axis regardless of earlier choice, without altering earlier plots
+    if "Elapsed_us" in df.columns:
+        x_sec_full = df["Elapsed_us"] * 1e-6
+    elif "epoch_s" in df.columns:
+        x_sec_full = df["epoch_s"] - float(df["epoch_s"].iloc[0])
+    elif "iso_time" in df.columns:
+        t = pd.to_datetime(df["iso_time"], errors="coerce")
+        x_sec_full = (t - t.iloc[0]).dt.total_seconds()
+    else:
+        x_sec_full = pd.Series(range(len(df)), index=df.index, dtype=float)  # fallback: sample index as seconds
+
+    x_sec = x_sec_full[idx]
+
+    # Torque constant (N·m/A). Adjust if using a different motor model.
+    Kt = 0.159
+
+    for group_key, (right, left) in MOTOR_NAMES.items():
+        rcur = f"{right}_{COLS['cur']}"
+        lcur = f"{left}_{COLS['cur']}"
+        if rcur in df.columns and lcur in df.columns:
+            r_tau = df[rcur] * Kt
+            l_tau = df[lcur] * Kt
+            title = f"{group_key.capitalize()} Torque"
+            out   = args.outdir / f"{group_key.capitalize()}_TorqueNm.png"
+            # Force x-axis label to seconds for these torque plots
+            plot_pair(df, right, left, r_tau[idx], l_tau[idx], x_sec, title, "Torque (N·m)", out, "Time (s)")
+        else:
+            print(f"Current columns missing for {group_key}; skipping torque plots.")
 
 if __name__ == "__main__":
     main()
