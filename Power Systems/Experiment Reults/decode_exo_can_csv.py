@@ -14,7 +14,7 @@ import csv
 from pathlib import Path
 
 # >>> EDIT THIS LINE: put your CSV path here (leave "" to use CLI argument)
-DEFAULT_INPUT_PATH = r"C:\Users\india\Downloads\thesis\EASE_Exoskeleton\Power Systems\Experiment Reults\gait_data_log_20251112_144050.csv"
+DEFAULT_INPUT_PATH = r"C:\Users\india\Downloads\thesis\EASE_Exoskeleton\Power Systems\Experiment Reults\Experiment2\gait_data_log_20251114_161409.csv"
 
 MOTOR_ORDER = ["RightHip", "RightKnee", "LeftKnee", "LeftHip"]
 

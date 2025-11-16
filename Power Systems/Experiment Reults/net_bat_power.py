@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-DEFAULT_CSV = Path(__file__).parent / "Experiment1" / "gait_data_log_20251111_173516_decoded.csv"
+DEFAULT_CSV = Path(__file__).parent / "Experiment2" / "gait_data_log_20251114_163330_decoded.csv"
 MOTORS = ["RightHip", "LeftHip", "RightKnee", "LeftKnee"]
 
 # ---------- helpers ----------

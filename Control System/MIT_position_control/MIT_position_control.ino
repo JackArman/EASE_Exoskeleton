@@ -179,7 +179,7 @@ void loop() {
   const float v_des = 0.0f;
   const float kp = 40.0f;
   const float kd = 2.0f;
-  const float torque_ff = 2.0f;
+  const float torque_ff = 8.0f;
 
   delay(10);
 
