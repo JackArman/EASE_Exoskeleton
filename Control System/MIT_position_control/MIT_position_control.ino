@@ -185,9 +185,9 @@ void loop() {
   // const float torque_ff_max_hip = 26.15625; //HIGH SETTINGS
   // const float torque_ff_max_knee = 14.95125f; 
   
-
   int LgaitIndex = 0;
   int RgaitIndex = GAIT_LENGTH / 2;
+  
 
   // Scale LgaitIndex (assume GAIT_LENGTH >= 100)
   float rampFactor = (float)LgaitIndex / 100.0;  
@@ -197,16 +197,16 @@ void loop() {
   if (rampFactor < 0.0) rampFactor = 0.0;
 
   // Compute ramped torque_ff
-  float torque_ff_R_HIP = torque_ff_max_hip * rampFactor;
-  float torque_ff_R_KNEE = torque_ff_max_knee * rampFactor;
+  float torque_ff_L_HIP = torque_ff_max_hip * rampFactor;
+  float torque_ff_L_KNEE = torque_ff_max_knee * rampFactor;
   
   
   // Scale RgaitIndex (assume GAIT_LENGTH >= 100)
   rampFactor = (float)RgaitIndex / 100.0;
 
   // Compute ramped torque_ff
-  float torque_ff_L_HIP = torque_ff_max_hip * rampFactor;
-  float torque_ff_L_KNEE = torque_ff_max_knee * rampFactor;
+  float torque_ff_R_HIP = torque_ff_max_hip * rampFactor;
+  float torque_ff_R_KNEE = torque_ff_max_knee * rampFactor;
 
   delay(10);
 
@@ -227,17 +227,33 @@ void loop() {
     int leftKnee  = (LgaitIndex + offset) % GAIT_LENGTH;
     int rightKnee = (RgaitIndex + offset) % GAIT_LENGTH;
 
-    sendMITCommand(-(R_hip[LgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, -torque_ff_L_HIP, MOTOR_ID_LEFT_HIP);
-    delayMicroseconds(150); drainRXUntil(400);
+    float elapsed_time = esp_timer_get_time() - t0_us; 
+    float temp = 10*10^6; //10 seconds in us
+    if (elapsed_time < temp) {
+      sendMITCommand(-(R_hip[LgaitIndex] + 0.02f) * (i/20.0f) * elapsed_time/(temp * 10),  v_des, kp, kd, -torque_ff_L_HIP * elapsed_time/(temp * 10), MOTOR_ID_LEFT_HIP);
+      delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand(-(R_knee[leftKnee] * 0.8f)   * (i/20.0f),  v_des, kp, kd, -torque_ff_L_KNEE, MOTOR_ID_LEFT_KNEE);
-    delayMicroseconds(150); drainRXUntil(400);
+      sendMITCommand(-(R_knee[leftKnee] * 0.8f)   * (i/20.0f) * elapsed_time/(temp * 10),  v_des, kp, kd, -torque_ff_L_KNEE * elapsed_time/(temp * 10), MOTOR_ID_LEFT_KNEE);
+      delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand( (R_hip[RgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, torque_ff_R_HIP, MOTOR_ID_RIGHT_HIP);
-    delayMicroseconds(150); drainRXUntil(400);
+      sendMITCommand( (R_hip[RgaitIndex] + 0.02f) * (i/20.0f) * elapsed_time/(temp * 10),  v_des, kp, kd, torque_ff_R_HIP * elapsed_time/(temp * 10), MOTOR_ID_RIGHT_HIP);
+      delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand( (R_knee[rightKnee] * 0.8f)  * (i/20.0f),  v_des, kp, kd, torque_ff_R_KNEE, MOTOR_ID_RIGHT_KNEE);
-    delayMicroseconds(200); drainRXUntil(500);
+      sendMITCommand( (R_knee[rightKnee] * 0.8f)  * (i/20.0f) * elapsed_time/(temp * 10),  v_des, kp, kd, torque_ff_R_KNEE * elapsed_time/(temp * 10), MOTOR_ID_RIGHT_KNEE);
+      delayMicroseconds(200); drainRXUntil(500);
+    } else {
+      sendMITCommand(-(R_hip[LgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, -torque_ff_L_HIP, MOTOR_ID_LEFT_HIP);
+      delayMicroseconds(150); drainRXUntil(400);
+
+      sendMITCommand(-(R_knee[leftKnee] * 0.8f)   * (i/20.0f),  v_des, kp, kd, -torque_ff_L_KNEE, MOTOR_ID_LEFT_KNEE);
+      delayMicroseconds(150); drainRXUntil(400);
+
+      sendMITCommand( (R_hip[RgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, torque_ff_R_HIP, MOTOR_ID_RIGHT_HIP);
+      delayMicroseconds(150); drainRXUntil(400);
+
+      sendMITCommand( (R_knee[rightKnee] * 0.8f)  * (i/20.0f),  v_des, kp, kd, torque_ff_R_KNEE, MOTOR_ID_RIGHT_KNEE);
+      delayMicroseconds(200); drainRXUntil(500);
+    }
 
     delay(10);
   }

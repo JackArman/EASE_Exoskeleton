@@ -1,0 +1,1 @@
+faults: - plug disconnected during use on right motor hip. logged 3 mins successfully, restart at 7 mins left

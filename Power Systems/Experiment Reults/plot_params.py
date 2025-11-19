@@ -20,8 +20,8 @@ import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 
-DEFAULT_INPUT  = Path(__file__).parent / "Experiment2" / "gait_data_log_20251114_161409_decoded.csv"
-DEFAULT_OUTDIR = Path(__file__).parent / "Experiment2"
+DEFAULT_INPUT  = Path(__file__).parent / "Experiment1" / "gait_data_log_20251119_152238_decoded.csv"
+DEFAULT_OUTDIR = Path(__file__).parent / "Experiment1"
 
 MOTOR_NAMES = {
     "hip":  ("RightHip", "LeftHip"),
