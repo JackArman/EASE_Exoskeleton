@@ -134,7 +134,7 @@ static inline void sendMITCommand(float p_des, float v_des, float kp, float kd, 
   int v_int  = float_to_uint(v_des, -33.0f, 33.0f, 12);
   int kp_int = float_to_uint(kp, 0.0f, 500.0f, 12);
   int kd_int = float_to_uint(kd, 0.0f, 5.0f,   12);
-  int t_int  = float_to_uint(t_ff, -65.0f, 65.0f, 12);
+  int t_int  = float_to_uint(t_ff, -54.0f, 54.0f, 12); //max is +-64Nm, but clamp to lower than max
 
   const uint32_t can_id = ((uint32_t)0x08 << 8) | motor_id; // [28:8]=0x08, [7:0]=Drive ID
   canMsg.can_id  = 0x80000000UL | can_id;   // Extended frame flag
@@ -179,12 +179,37 @@ void loop() {
   const float v_des = 0.0f;
   const float kp = 40.0f;
   const float kd = 2.0f;
-  const float torque_ff = 8.0f;
+  const float torque_ff_max_hip = 8.71875f; //LOW SETTINGS
+  const float torque_ff_max_knee = 4.98375f; 
 
-  delay(10);
+  // const float torque_ff_max_hip = 26.15625; //HIGH SETTINGS
+  // const float torque_ff_max_knee = 14.95125f; 
+  
 
   int LgaitIndex = 0;
   int RgaitIndex = GAIT_LENGTH / 2;
+
+  // Scale LgaitIndex (assume GAIT_LENGTH >= 100)
+  float rampFactor = (float)LgaitIndex / 100.0;  
+
+  // Clamp rampFactor between 0 and 1
+  if (rampFactor > 1.0) rampFactor = 1.0;
+  if (rampFactor < 0.0) rampFactor = 0.0;
+
+  // Compute ramped torque_ff
+  float torque_ff_R_HIP = torque_ff_max_hip * rampFactor;
+  float torque_ff_R_KNEE = torque_ff_max_knee * rampFactor;
+  
+  
+  // Scale RgaitIndex (assume GAIT_LENGTH >= 100)
+  rampFactor = (float)RgaitIndex / 100.0;
+
+  // Compute ramped torque_ff
+  float torque_ff_L_HIP = torque_ff_max_hip * rampFactor;
+  float torque_ff_L_KNEE = torque_ff_max_knee * rampFactor;
+
+  delay(10);
+
   int dialValue = analogRead(dialPin);
   dialState dial = getDialState(dialValue);
 
@@ -202,29 +227,20 @@ void loop() {
     int leftKnee  = (LgaitIndex + offset) % GAIT_LENGTH;
     int rightKnee = (RgaitIndex + offset) % GAIT_LENGTH;
 
-    sendMITCommand(-(R_hip[LgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_HIP);
+    sendMITCommand(-(R_hip[LgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, -torque_ff_L_HIP, MOTOR_ID_LEFT_HIP);
     delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand(-(R_knee[leftKnee] * 0.8f)   * (i/20.0f),  v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_KNEE);
+    sendMITCommand(-(R_knee[leftKnee] * 0.8f)   * (i/20.0f),  v_des, kp, kd, -torque_ff_L_KNEE, MOTOR_ID_LEFT_KNEE);
     delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand( (R_hip[RgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_HIP);
+    sendMITCommand( (R_hip[RgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, torque_ff_R_HIP, MOTOR_ID_RIGHT_HIP);
     delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand( (R_knee[rightKnee] * 0.8f)  * (i/20.0f),  v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE);
+    sendMITCommand( (R_knee[rightKnee] * 0.8f)  * (i/20.0f),  v_des, kp, kd, torque_ff_R_KNEE, MOTOR_ID_RIGHT_KNEE);
     delayMicroseconds(200); drainRXUntil(500);
 
     delay(10);
   }
-
-  // Round-robin TX order to avoid starving the same pair each cycle
-  uint8_t phase = 0;
-  const uint8_t orders[4][4] = {
-    {MOTOR_ID_LEFT_HIP,  MOTOR_ID_LEFT_KNEE, MOTOR_ID_RIGHT_HIP,  MOTOR_ID_RIGHT_KNEE},
-    {MOTOR_ID_RIGHT_HIP, MOTOR_ID_RIGHT_KNEE, MOTOR_ID_LEFT_HIP,  MOTOR_ID_LEFT_KNEE },
-    {MOTOR_ID_LEFT_KNEE, MOTOR_ID_LEFT_HIP,  MOTOR_ID_RIGHT_KNEE, MOTOR_ID_RIGHT_HIP },
-    {MOTOR_ID_RIGHT_KNEE,MOTOR_ID_RIGHT_HIP, MOTOR_ID_LEFT_KNEE,  MOTOR_ID_LEFT_HIP  }
-  };
 
   auto posFor = [&](uint8_t id, int Lidx, int Ridx, int leftK, int rightK)->float{
     if (id == MOTOR_ID_LEFT_HIP)   return -(R_hip[Lidx]) * 1.3f;
@@ -234,47 +250,53 @@ void loop() {
   };
 
   while (dial != DIAL_OFF) {
-    int leftKnee  = (LgaitIndex + offset) % GAIT_LENGTH;
+    int leftKnee = (LgaitIndex + offset) % GAIT_LENGTH;
     int rightKnee = (RgaitIndex + offset) % GAIT_LENGTH;
 
     dialValue = analogRead(dialPin);
     dial = getDialState(dialValue);
-    dial = DIAL_MEDIUM; // FOR NO POTENTIOMETER
 
-    // Send in rotating order, with small gaps + bounded RX drains
-    for (int k = 0; k < 4; k++) {
-      uint8_t id = orders[phase][k];
-      sendMITCommand(posFor(id, LgaitIndex, RgaitIndex, leftKnee, rightKnee), v_des, kp, kd, torque_ff, id);
-      delayMicroseconds(150);   // ~> 1 frame time at 1 Mbps to de-bunch traffic
-      drainRXUntil(450);        // pull whatever arrived; broadcast-friendly
-    }
+    dial = DIAL_MEDIUM; // FOR NO PETENTIOMETER
 
-    // final catch-up drain
-    drainRXUntil(600);
+    // if (dial == DIAL_OFF) {
+    //   break;
+    // }
 
-    // advance indices and rotate who goes first
+    sendMITCommand(-(R_hip[LgaitIndex]) * 1.3, v_des, kp, kd, -torque_ff_L_HIP, MOTOR_ID_LEFT_HIP);
+    sendMITCommand(-(R_knee[leftKnee] * .7) * 1.3, v_des, kp, kd, -torque_ff_L_KNEE, MOTOR_ID_LEFT_KNEE);
+    sendMITCommand((R_hip[RgaitIndex]) * 1.3, v_des, kp, kd, torque_ff_R_HIP, MOTOR_ID_RIGHT_HIP);
+    sendMITCommand((R_knee[rightKnee] * .7) * 1.3, v_des, kp, kd, torque_ff_R_KNEE, MOTOR_ID_RIGHT_KNEE);
     LgaitIndex = (LgaitIndex + 1) % GAIT_LENGTH;
     RgaitIndex = (RgaitIndex + 1) % GAIT_LENGTH;
-    phase = (phase + 1) & 0x03;
+    if (LgaitIndex == 0) { 
+      maxAmp1 = 0;
+      maxAmp2 = 0;
+    }
 
-    // decimated logging to reduce Serial blocking
+    int _delay = 20 + dial;
+    // if (LgaitIndex == 0) {
+    //   dial = DIAL_OFF; // FOR NO POTENTIOMETER
+    // }
+    while (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
+      decodeMotorFeedback(&canMsg);
+    }
+
     logGaitData(LgaitIndex, RgaitIndex);
 
-    int _delay = 20 + dial; // ~50 Hz baseline
     delay(_delay);
   }
 
-  // MOVE LEGS BACK TO ZERO (keep drains so RX FIFOs don't overflow)
-  Serial.println("Moving legs to zero");
-  for (int i = 1; i < 20; i++) {
-    sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_HIP);   delayMicroseconds(150); drainRXUntil(300);
-    sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_LEFT_KNEE);  delayMicroseconds(150); drainRXUntil(300);
-    sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_HIP);  delayMicroseconds(150); drainRXUntil(300);
-    sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE); delayMicroseconds(150); drainRXUntil(300);
-    delay(10);
-  }
-  delay(200);
-  Serial.println("finished control loop, restarting");
+  //   // MOVE LEGS BACK TO ZERO
+  // Serial.println("Moving legs to zero");
+  // for (int i = 1; i < 20; i++) {
+  //   sendMITCommand(0,  v_des, kp, kd, -torque_ff, MOTOR_ID_LEFT_HIP);
+  //   sendMITCommand(0, v_des, kp, kd, -torque_ff, MOTOR_ID_LEFT_KNEE);
+  //   sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_HIP);
+  //   sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE);
+  //   delay(50);
+  // }  
+  // delay(200); // ~50 Hz control loop
+  // Serial.println("finished control loop, restarting");
 }
 
 void decodeMotorFeedback(struct can_frame *msg) {
