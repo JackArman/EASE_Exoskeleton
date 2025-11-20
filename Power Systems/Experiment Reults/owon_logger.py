@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 # ---------------- CONFIGURATION ----------------
-PORT = "COM4"            # change to your actual port
+PORT = "COM5"            # change to your actual port
 BAUD = 115200            # default from the manual
 CMD  = "MEAS:CURR?"      # or MEAS:VOLT? / MEAS?
 SAMPLE_PERIOD = 0.05     # 50 ms between polls (~20 Hz)

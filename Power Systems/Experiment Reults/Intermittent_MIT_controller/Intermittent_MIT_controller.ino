@@ -31,6 +31,11 @@ uint8_t msgDataLeftHip[8]   = {0};
 uint8_t msgDataLeftKnee[8]  = {0};
 
 int64_t t0_us = 0;              // <<< added: logging start time (microseconds)
+float gaitTime = 0;
+double R_hip_ang = 0.0;
+double R_knee_ang = 0.0;
+double L_hip_ang = 0.0;
+double L_knee_ang = 0.0;
 
 #define GAIT_LENGTH 100
 
@@ -129,6 +134,54 @@ static inline void openAllFiltersAndRollover() {
   // mcp2515.setRollover(true);
 }
 
+// ===== Current Brake / Current Mode ranges (SET THESE FROM DATASHEET) =====
+const float I_BRAKE_MIN = -60.0f;   // <<< SET FROM DATASHEET (min phase current, A)
+const float I_BRAKE_MAX =  60.0f;   // <<< SET FROM DATASHEET (max phase current, A)
+
+// If the datasheet uses a different mode ID for current brake, set it here.
+// Your MIT mode uses 0x08 << 8 | motor_id; often current mode is 0x0C, 0x0B, etc.
+const uint8_t CURRENT_BRAKE_MODE_ID = 0x02;   // <<< SET FROM DATASHEET (command ID for current / brake)
+
+// Simple helper (same style as before)
+static inline float clampf(float x, float x_min, float x_max) {
+  if (x < x_min) return x_min;
+  if (x > x_max) return x_max;
+  return x;
+}
+
+static inline void sendCurrentBrake(float i_brake_A, uint8_t motor_id)
+{
+  // 1) Use magnitude, clamp to [0, 60] A
+  float i_cmd = fabsf(i_brake_A);
+  i_cmd = clampf(i_cmd, I_BRAKE_MIN, I_BRAKE_MAX);
+
+  // 2) Scale to int32: current [A] * 1000 -> 0..60000
+  int32_t i_scaled = (int32_t)(i_cmd * 1000.0f);
+
+  // 3) Pack as big-endian (same as buffer_append_int32 in datasheet)
+  uint8_t buf[4];
+  buf[0] = (uint8_t)((i_scaled >> 24) & 0xFF);
+  buf[1] = (uint8_t)((i_scaled >> 16) & 0xFF);
+  buf[2] = (uint8_t)((i_scaled >>  8) & 0xFF);
+  buf[3] = (uint8_t)( i_scaled        & 0xFF);
+
+  // 4) 29-bit CAN ID: controller_id | (CAN_PACKET_SET_CURRENT_BRAKE << 8)
+  uint32_t can_id = (uint32_t)motor_id |
+                    ((uint32_t)0x02 << 8);
+
+  canMsg.can_id  = can_id | CAN_EFF_FLAG;  // extended frame
+  canMsg.can_dlc = 4;                      // only 4 data bytes
+
+  canMsg.data[0] = buf[0];
+  canMsg.data[1] = buf[1];
+  canMsg.data[2] = buf[2];
+  canMsg.data[3] = buf[3];
+
+  // Remaining bytes are ignored because DLC=4
+
+  mcp2515.sendMessage(&canMsg);
+}
+
 static inline void sendMITCommand(float p_des, float v_des, float kp, float kd, float t_ff, uint8_t motor_id) {
   int p_int  = float_to_uint(p_des, -12.56f, 12.56f, 16);
   int v_int  = float_to_uint(v_des, -33.0f, 33.0f, 12);
@@ -136,7 +189,7 @@ static inline void sendMITCommand(float p_des, float v_des, float kp, float kd, 
   int kd_int = float_to_uint(kd, 0.0f, 5.0f,   12);
   int t_int  = float_to_uint(t_ff, -54.0f, 54.0f, 12); //max is +-64Nm, but clamp to lower than max
 
-  const uint32_t can_id = ((uint32_t)0x08 << 8) | motor_id; // [28:8]=0x08, [7:0]=Drive ID
+  uint32_t can_id = ((uint32_t)0x08 << 8) | motor_id; // [28:8]=0x08, [7:0]=Drive ID
   canMsg.can_id  = 0x80000000UL | can_id;   // Extended frame flag
   canMsg.can_dlc = 8;
 
@@ -162,7 +215,7 @@ void setup() {
   mcp2515.setNormalMode();
 
   t0_us = esp_timer_get_time();   // <<< added: capture start timestamp
-  delay(500);
+  delay(10000);
   Serial.println("Multi-joint gait tracking started");
 }
 
@@ -177,13 +230,13 @@ dialState getDialState(int dialValue) {
 void loop() {
   // Common control params
   const float v_des = 0.0f;
-  const float kp = 40.0f;
-  const float kd = 2.0f;
-  const float torque_ff_max_hip = 8.71875f; //LOW SETTINGS
-  const float torque_ff_max_knee = 4.98375f; 
+  float kp = 40.0f;
+  float kd = 2.0f;
+  // const float torque_ff_max_hip = 8.71875f; //LOW SETTINGS
+  // const float torque_ff_max_knee = 4.98375f; 
 
-  // const float torque_ff_max_hip = 26.15625; //HIGH SETTINGS
-  // const float torque_ff_max_knee = 14.95125f;
+  const float torque_ff_max_hip = 26.15625; //HIGH SETTINGS
+  const float torque_ff_max_knee = 14.95125f;
   
   int LgaitIndex = 0;
   int RgaitIndex = GAIT_LENGTH / 2;
@@ -200,7 +253,11 @@ void loop() {
   float torque_ff_L_HIP = torque_ff_max_hip * rampFactor;
   float torque_ff_L_KNEE = torque_ff_max_knee * rampFactor;
   
-  
+  // Clamp rampFactor between 0 and 1
+  if (rampFactor > 1.0) rampFactor = 1.0;
+  if (rampFactor < 0.0) rampFactor = 0.0;
+
+
   // Scale RgaitIndex (assume GAIT_LENGTH >= 100)
   rampFactor = (float)RgaitIndex / 100.0;
 
@@ -223,27 +280,33 @@ void loop() {
   Serial.println("Moving legs to start");
 
   // Move leg into position (with micro-gaps + RX drains to avoid burst collisions)
-  for (int i = 1; i < 20; i++) {
+  float iterations = 500.0f;
+  for (int i = 1; i < iterations; i++) {
     int leftKnee  = (LgaitIndex + offset) % GAIT_LENGTH;
     int rightKnee = (RgaitIndex + offset) % GAIT_LENGTH;
 
-    float elapsed_time = esp_timer_get_time() - t0_us; 
-    float temp = pow(10, 6); //10 seconds in us
-    sendMITCommand(-(R_hip[LgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, -torque_ff_L_HIP * (i/20.0f), MOTOR_ID_LEFT_HIP);
+    sendMITCommand(-(R_hip[LgaitIndex] * 1.3f) * (i/iterations),  v_des, kp  - 10, kd, -torque_ff_L_HIP * (i/iterations), MOTOR_ID_LEFT_HIP);
     delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand(-(R_knee[leftKnee] * 0.8f)   * (i/20.0f),  v_des, kp, kd, -torque_ff_L_KNEE * (i/20.0f), MOTOR_ID_LEFT_KNEE);
+    sendMITCommand(-(R_knee[leftKnee] * 0.9f)   * (i/iterations),  v_des, kp - 10, kd, -torque_ff_L_KNEE * (i/iterations), MOTOR_ID_LEFT_KNEE);
     delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand( (R_hip[RgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, torque_ff_R_HIP * (i/20.0f), MOTOR_ID_RIGHT_HIP);
+    sendMITCommand( (R_hip[RgaitIndex] * 1.3f) * (i/iterations),  v_des, kp - 10, kd, torque_ff_R_HIP * (i/iterations), MOTOR_ID_RIGHT_HIP);
     delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand( (R_knee[rightKnee] * 0.8f)  * (i/20.0f),  v_des, kp, kd, torque_ff_R_KNEE * (i/20.0f), MOTOR_ID_RIGHT_KNEE);
+    sendMITCommand( (R_knee[rightKnee] * 0.9f)  * (i/iterations),  v_des, kp - 10 , kd, torque_ff_R_KNEE * (i/iterations), MOTOR_ID_RIGHT_KNEE);
     delayMicroseconds(200); drainRXUntil(500);
 
-    delay(10);
+    while (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
+      decodeMotorFeedback(&canMsg);
+    }
+    
+    logGaitData(LgaitIndex, RgaitIndex);
+
+    delay(1);
   }
-  
+
+  int exitCond = false;
   while (dial != DIAL_OFF) {
     int leftKnee = (LgaitIndex + offset) % GAIT_LENGTH;
     int rightKnee = (RgaitIndex + offset) % GAIT_LENGTH;
@@ -256,6 +319,29 @@ void loop() {
     // if (dial == DIAL_OFF) {
     //   break;
     // }
+
+    // Scale LgaitIndex (assume GAIT_LENGTH >= 100)
+    rampFactor = (float)LgaitIndex / 100.0;  
+
+    // Clamp rampFactor between 0 and 1
+    if (rampFactor > 0.25) rampFactor = 0.25;
+    if (rampFactor < 0.0) rampFactor = 0.0;
+
+    // Compute ramped torque_ff
+    torque_ff_L_HIP = torque_ff_max_hip * rampFactor;
+    torque_ff_L_KNEE = torque_ff_max_knee * rampFactor;
+    
+    
+    // Scale RgaitIndex (assume GAIT_LENGTH >= 100)
+    rampFactor = (float)RgaitIndex / 100.0;
+
+    // Clamp rampFactor between 0 and 1
+    if (rampFactor > 0.25) rampFactor = 0.25;
+    if (rampFactor < 0.0) rampFactor = 0.0;
+
+    // Compute ramped torque_ff
+    torque_ff_R_HIP = torque_ff_max_hip * rampFactor;
+    torque_ff_R_KNEE = torque_ff_max_knee * rampFactor;
 
     sendMITCommand(-(R_hip[LgaitIndex]) * 1.3, v_des, kp, kd, -torque_ff_L_HIP, MOTOR_ID_LEFT_HIP);
     sendMITCommand(-(R_knee[leftKnee] * .7) * 1.3, v_des, kp, kd, -torque_ff_L_KNEE, MOTOR_ID_LEFT_KNEE);
@@ -278,20 +364,72 @@ void loop() {
 
     logGaitData(LgaitIndex, RgaitIndex);
 
+    //break when right leg reaches 0 (straight legged) and after 2 seconds has passed
+    if (RgaitIndex  == 0) {
+      if (exitCond) {
+        break;
+      }
+      exitCond = true;
+    }
+
     delay(_delay);
   }
 
-  //   // MOVE LEGS BACK TO ZERO
-  // Serial.println("Moving legs to zero");
-  // for (int i = 1; i < 20; i++) {
-  //   sendMITCommand(0,  v_des, kp, kd, -torque_ff, MOTOR_ID_LEFT_HIP);
-  //   sendMITCommand(0, v_des, kp, kd, -torque_ff, MOTOR_ID_LEFT_KNEE);
-  //   sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_HIP);
-  //   sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE);
-  //   delay(50);
-  // }  
-  // delay(200); // ~50 Hz control loop
-  // Serial.println("finished control loop, restarting");
+    // MOVE LEGS BACK TO ZERO
+  Serial.println("Moving legs to zero");
+  iterations = 300.0;
+  kp = 150;
+  kd = kp/3;
+  for (int i = 1; i < iterations; i++) {
+    int leftKnee  = (LgaitIndex + offset) % GAIT_LENGTH;
+    int rightKnee = (RgaitIndex + offset) % GAIT_LENGTH;
+  
+    double R_hip_ang = -(R_hip[LgaitIndex] * 1.3f) * (1 - i/iterations);
+    double R_knee_ang = -(R_knee[leftKnee] * 0.9f) * (1 - i/iterations);
+    double L_hip_ang = (R_hip[RgaitIndex] * 1.3f) * (1 - i/iterations);
+    double L_knee_ang = (R_knee[rightKnee] * 0.9f) * (1 - i/iterations);
+
+    sendMITCommand(R_hip_ang,  v_des, kp, kd, -torque_ff_L_HIP * (1 - i/iterations), MOTOR_ID_LEFT_HIP);
+    delayMicroseconds(150); drainRXUntil(400);
+
+    sendMITCommand(R_knee_ang,  v_des, kp, kd, -torque_ff_L_KNEE * (1 - i/iterations), MOTOR_ID_LEFT_KNEE);
+    delayMicroseconds(150); drainRXUntil(400);
+
+    sendMITCommand(L_hip_ang,  v_des, kp, kd, torque_ff_R_HIP * (1 - i/iterations), MOTOR_ID_RIGHT_HIP);
+    delayMicroseconds(150); drainRXUntil(400);
+
+    sendMITCommand(L_knee_ang,  v_des, kp, kd, torque_ff_R_KNEE * (1 - i/iterations), MOTOR_ID_RIGHT_KNEE);
+    delayMicroseconds(200); drainRXUntil(500);
+
+    while (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
+      decodeMotorFeedback(&canMsg);
+    }
+    
+    logGaitData(LgaitIndex, RgaitIndex);
+    delay(1);
+  }
+  Serial.println("finished control loop, restarting");
+
+  //hold position while controlling position
+
+  int hold_time = 3000;
+  uint32_t t_start = millis();
+  while (millis() - t_start < hold_time) {
+    // stiff hold at zero position, zero speed, no feedforward torque
+    sendMITCommand(R_hip_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_LEFT_HIP);
+    sendMITCommand(R_knee_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_LEFT_KNEE);
+    sendMITCommand(L_hip_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_RIGHT_HIP);
+    sendMITCommand(L_knee_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_RIGHT_KNEE);
+
+    // keep draining feedback so CAN FIFOs don't overflow
+    while (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
+      decodeMotorFeedback(&canMsg);
+    }
+    
+    logGaitData(LgaitIndex, RgaitIndex);
+
+    delay(5);  // ~200 Hz hold loop
+  }
 }
 
 void decodeMotorFeedback(struct can_frame *msg) {
