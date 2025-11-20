@@ -232,11 +232,11 @@ void loop() {
   const float v_des = 0.0f;
   float kp = 40.0f;
   float kd = 2.0f;
-  // const float torque_ff_max_hip = 8.71875f; //LOW SETTINGS
-  // const float torque_ff_max_knee = 4.98375f; 
+  const float torque_ff_max_hip = 8.71875f; //LOW SETTINGS
+  const float torque_ff_max_knee = 4.98375f; 
 
-  const float torque_ff_max_hip = 26.15625; //HIGH SETTINGS
-  const float torque_ff_max_knee = 14.95125f;
+  // const float torque_ff_max_hip = 26.15625; //HIGH SETTINGS
+  // const float torque_ff_max_knee = 14.95125f;
   
   int LgaitIndex = 0;
   int RgaitIndex = GAIT_LENGTH / 2;
