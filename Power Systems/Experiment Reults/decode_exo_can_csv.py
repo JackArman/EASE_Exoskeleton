@@ -14,7 +14,7 @@ import csv
 from pathlib import Path
 
 # >>> EDIT THIS LINE: put your CSV path here (leave "" to use CLI argument)
-DEFAULT_INPUT_PATH = r"C:\Users\india\Downloads\thesis\EASE_Exoskeleton\Power Systems\Experiment Reults\Experiment1\gait_data_log_20251119_152238.csv"
+DEFAULT_INPUT_PATH = r""
 
 MOTOR_ORDER = ["RightHip", "RightKnee", "LeftKnee", "LeftHip"]
 
@@ -64,12 +64,14 @@ def _parse_row_strict_elapsed(row):
       [TimeStep, Elapsed_us, L_idx, R_idx, 32 bytes...]
 
     Returns (timestep:int, elapsed_us:int, L_idx:int, R_idx:int, bytes32:list[int]) or None.
+    Accepts values like '0', '0.0', '23.0' for all numeric fields.
     """
+    # Strip empty fields
     row = [x.strip() for x in row if x.strip() != ""]
     if not row:
         return None
 
-    # Skip header row if present (must start with 'TimeStep')
+    # Skip header row if present
     if row[0].lower() == "timestep":
         return None
 
@@ -78,22 +80,28 @@ def _parse_row_strict_elapsed(row):
         return None
 
     try:
-        timestep    = int(row[0])
-        elapsed_us  = int(row[1])
-        L_idx       = int(row[2])
-        R_idx       = int(row[3])
+        # Allow floats like "10011585.0" and cast to int
+        timestep    = int(float(row[0]))
+        elapsed_us  = int(float(row[1]))
+        L_idx       = int(float(row[2]))
+        R_idx       = int(float(row[3]))
 
-        bytes_str   = row[4:4+32]
+        # Next 32 entries are 8-byte blocks for each motor
+        bytes_str = row[4:4+32]
         if len(bytes_str) != 32:
             return None
 
-        bytes_all = [int(b) for b in bytes_str]
+        # Also allow "23.0", "0.0" here
+        bytes_all = [int(float(b)) for b in bytes_str]
+
+        # Check byte range
         if any((b < 0 or b > 255) for b in bytes_all):
             return None
 
         return (timestep, elapsed_us, L_idx, R_idx, bytes_all)
 
     except (ValueError, IndexError):
+        # Any parse problems → invalid row
         return None
 
 def main():
