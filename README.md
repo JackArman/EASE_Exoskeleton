@@ -26,7 +26,7 @@ SharedAssets/ # CAD files, visuals, datasheets
 
 - [Google Drive Folder](https://docs.google.com/drawings/d/YOUR_DRAWING_ID)
 - [Quantitative Data](https://unsw.sharepoint.com/:x:/r/sites/EASEExoskeletonforAssistiveSupportofElderlies/_layouts/15/Doc2.aspx?action=edit&sourcedoc=%7B9e807ff8-6af3-4588-b46b-bf3667fb0fbe%7D&wdOrigin=TEAMS-MAGLEV.teamsSdk_ns.rwc&wdExp=TEAMS-TREATMENT&wdhostclicktime=1751412615255&web=1&ovuser=3ff6cfa4-e715-48db-b8e1-0867b9f9fba3%2Cz5422280%40ad.unsw.edu.au&clickparams=eyJBcHBOYW1lIjoiVGVhbXMtRGVza3RvcCIsIkFwcFZlcnNpb24iOiI0OS8yNTA2MDIwNjYxNiIsIkhhc0ZlZGVyYXRlZFVzZXIiOmZhbHNlfQ%3D%3D)
-
+- [Safe Work Procedure](https://salus.unsw.edu.au/unsw/#/view/Published-Safe-Work-Procedure/SWP-0009450) 
 ---
 
 ## Documentation
