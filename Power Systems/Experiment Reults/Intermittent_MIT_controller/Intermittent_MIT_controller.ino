@@ -93,6 +93,8 @@ double R_hip[GAIT_LENGTH] = {
 
 int offset = 90;
 
+int lastDialValue = 0;
+
 // Unique motor IDs (replace with actual IDs)
 const uint8_t MOTOR_ID_LEFT_HIP  = 0x03;
 const uint8_t MOTOR_ID_RIGHT_HIP = 0x01;
@@ -220,11 +222,15 @@ void setup() {
 }
 
 dialState getDialState(int dialValue) {
-  int dialPercent = map(dialValue, 0, 4095, 0, 100);
-  if (dialPercent < 25)  return DIAL_OFF;
-  if (dialPercent < 50)  return DIAL_LOW;
-  if (dialPercent < 75)  return DIAL_MEDIUM;
-  return DIAL_HIGH;
+  if (dialValue == 4095 && lastDialValue <= 4095 - 100) dialValue = lastDialValue;
+  dialValue = dialValue & 0b1111111111100000;
+  lastDialValue = dialValue;
+  int dialPercent = map(dialValue, 0, 4095, 0, 1000);
+  Serial.println(dialPercent);
+  if (dialPercent < 250)  return DIAL_HIGH;
+  if (dialPercent < 500)  return DIAL_MEDIUM;
+  if (dialPercent < 750)  return DIAL_LOW;
+  return DIAL_OFF;
 }
 
 void loop() {
@@ -270,14 +276,16 @@ void loop() {
   int dialValue = analogRead(dialPin);
   dialState dial = getDialState(dialValue);
 
-  dial = DIAL_MEDIUM; // FOR NO DIAL
+  //dial = DIAL_MEDIUM; // FOR NO DIAL
 
   while (dial == DIAL_OFF) {
     dialValue = analogRead(dialPin);
     dial = getDialState(dialValue);
+    Serial.println("not in loop");
+    delay(20);
   }
 
-  Serial.println("Moving legs to start");
+  // Serial.println("Moving legs to start");
 
   // Move leg into position (with micro-gaps + RX drains to avoid burst collisions)
   float iterations = 500.0f;
@@ -301,7 +309,7 @@ void loop() {
       decodeMotorFeedback(&canMsg);
     }
     
-    logGaitData(LgaitIndex, RgaitIndex);
+    // logGaitData(LgaitIndex, RgaitIndex);
 
     delay(1);
   }
@@ -314,11 +322,12 @@ void loop() {
     dialValue = analogRead(dialPin);
     dial = getDialState(dialValue);
 
-    dial = DIAL_MEDIUM; // FOR NO PETENTIOMETER
+    //dial = DIAL_MEDIUM; // FOR NO PETENTIOMETER
 
-    // if (dial == DIAL_OFF) {
-    //   break;
-    // }
+    if (dial == DIAL_OFF) {
+      Serial.println("Turning off");
+      break;
+    }
 
     // Scale LgaitIndex (assume GAIT_LENGTH >= 100)
     rampFactor = (float)LgaitIndex / 100.0;  
@@ -362,16 +371,15 @@ void loop() {
       decodeMotorFeedback(&canMsg);
     }
 
-    logGaitData(LgaitIndex, RgaitIndex);
+    // logGaitData(LgaitIndex, RgaitIndex);
 
     //break when right leg reaches 0 (straight legged) and after 2 seconds has passed
-    if (RgaitIndex  == 0) {
-      if (exitCond) {
-        break;
-      }
-      exitCond = true;
-    }
-
+    // if (RgaitIndex  == 0) {
+    //   if (exitCond) {
+    //     break;
+    //   }
+    //   exitCond = true;
+    // }
     delay(_delay);
   }
 
@@ -383,7 +391,7 @@ void loop() {
   for (int i = 1; i < iterations; i++) {
     int leftKnee  = (LgaitIndex + offset) % GAIT_LENGTH;
     int rightKnee = (RgaitIndex + offset) % GAIT_LENGTH;
-  
+
     double R_hip_ang = -(R_hip[LgaitIndex] * 1.3f) * (1 - i/iterations);
     double R_knee_ang = -(R_knee[leftKnee] * 0.9f) * (1 - i/iterations);
     double L_hip_ang = (R_hip[RgaitIndex] * 1.3f) * (1 - i/iterations);
@@ -405,31 +413,31 @@ void loop() {
       decodeMotorFeedback(&canMsg);
     }
     
-    logGaitData(LgaitIndex, RgaitIndex);
+    // logGaitData(LgaitIndex, RgaitIndex);
     delay(1);
   }
   Serial.println("finished control loop, restarting");
 
   //hold position while controlling position
 
-  int hold_time = 3000;
-  uint32_t t_start = millis();
-  while (millis() - t_start < hold_time) {
-    // stiff hold at zero position, zero speed, no feedforward torque
-    sendMITCommand(R_hip_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_LEFT_HIP);
-    sendMITCommand(R_knee_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_LEFT_KNEE);
-    sendMITCommand(L_hip_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_RIGHT_HIP);
-    sendMITCommand(L_knee_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_RIGHT_KNEE);
+  // int hold_time = 3000;
+  // uint32_t t_start = millis();
+  // while (millis() - t_start < hold_time) {
+  //   // stiff hold at zero position, zero speed, no feedforward torque
+  //   sendMITCommand(R_hip_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_LEFT_HIP);
+  //   sendMITCommand(R_knee_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_LEFT_KNEE);
+  //   sendMITCommand(L_hip_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_RIGHT_HIP);
+  //   sendMITCommand(L_knee_ang,  v_des, kp + 200, kd + 80, 0.0f, MOTOR_ID_RIGHT_KNEE);
 
-    // keep draining feedback so CAN FIFOs don't overflow
-    while (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
-      decodeMotorFeedback(&canMsg);
-    }
+  //   // keep draining feedback so CAN FIFOs don't overflow
+  //   while (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
+  //     decodeMotorFeedback(&canMsg);
+  //   }
     
-    logGaitData(LgaitIndex, RgaitIndex);
+  //   logGaitData(LgaitIndex, RgaitIndex);
 
-    delay(5);  // ~200 Hz hold loop
-  }
+  //   delay(5);  // ~200 Hz hold loop
+  // }
 }
 
 void decodeMotorFeedback(struct can_frame *msg) {
