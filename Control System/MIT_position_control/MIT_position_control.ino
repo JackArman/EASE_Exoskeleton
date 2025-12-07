@@ -1,39 +1,63 @@
-// revised code (broadcast-friendly, fair RX handling) + Elapsed_us logging
+// =========================================================
+// Exoskeleton Gait Controller — CAN + MIT Motor Protocol
+// Purpose:
+//   Drives 4 motors (Left/Right Hip + Knee) using
+//   pre-defined gait trajectories over CAN bus.
+//
+// Features:
+//   - Real-time gait pattern playback
+//   - Dial-controlled speed (potentiometer)
+//   - Feedback logging over Serial (time-stamped)
+//   - Broadcast-friendly CAN RX handling
+// =========================================================
 
 #include <SPI.h>
 #include <mcp2515.h>
 #include <cstdint>
-#include "esp_timer.h"          // <<< added: ESP32 high-resolution timer
+#include "esp_timer.h"          // High-resolution timer for ESP32
 
+// ---------- Global CAN + Hardware Setup ----------
 struct can_frame canMsg;
-MCP2515 mcp2515(5);
+MCP2515 mcp2515(5);             // CAN CS pin
 
-const int dialPin = 34;  // ADC pin
+const int dialPin = 34;         // ADC pin for speed control dial
 
+// Dial states map to speed delays (ms added to base delay)
 enum dialState {
-  DIAL_OFF = -1,
-  DIAL_LOW = 40,
-  DIAL_MEDIUM = 20,
-  DIAL_HIGH = 0
+  DIAL_OFF = -1,    // Stop motion
+  DIAL_LOW = 40,    // Slow
+  DIAL_MEDIUM = 20, // Medium
+  DIAL_HIGH = 0     // Fast
 };
 
+// ---------- Runtime variables ----------
 double maxAmp1 = 0;
 double maxAmp2 = 0;
 double maxAmp3 = 0;
 double maxAmp4 = 0;
 double total = 0;
 double maxTotal = 0;
-long gait_step_counter = 0;
 
+long gait_step_counter = 0;     // Logging counter
+
+// Latest feedback from each motor (8 bytes per motor)
 uint8_t msgDataRightHip[8]  = {0};
 uint8_t msgDataRightKnee[8] = {0};
 uint8_t msgDataLeftHip[8]   = {0};
 uint8_t msgDataLeftKnee[8]  = {0};
 
-int64_t t0_us = 0;              // <<< added: logging start time (microseconds)
+// Timestamp for elapsed-time logging
+int64_t t0_us = 0;
 
+// Length of gait lookup tables
 #define GAIT_LENGTH 100
 
+// =========================================================
+// Gait Trajectories
+// Each array represents normalized joint position over one step
+// =========================================================
+
+// Left Knee trajectory
 double L_knee[GAIT_LENGTH] = {
 0.042200, 0.059562, 0.092671, 0.141522, 0.204591, 0.278567, 0.358855, 0.440760, 0.520656, 0.596433,
 0.667199, 0.732766, 0.793217, 0.848651, 0.899057, 0.944284, 0.984064, 1.018047, 1.045814, 1.066864,
@@ -47,6 +71,8 @@ double L_knee[GAIT_LENGTH] = {
 0.270381, 0.249164, 0.225926, 0.200732, 0.173782, 0.145765, 0.118156, 0.093322, 0.074331, 0.064467
 };
 
+
+// Left Hip trajectory
 double L_hip[GAIT_LENGTH] = {
 0.292550, 0.297928, 0.304605, 0.314464, 0.326739, 0.340090, 0.352850, 0.363396, 0.370504, 0.373525,
 0.372359, 0.367321, 0.358969, 0.347929, 0.334727, 0.319662, 0.302772, 0.283915, 0.262917, 0.239725,
@@ -60,6 +86,7 @@ double L_hip[GAIT_LENGTH] = {
 0.317008, 0.319036, 0.319227, 0.317822, 0.314967, 0.310784, 0.305515, 0.299675, 0.294106, 0.289862
 };
 
+// Right Knee trajectory
 double R_knee[GAIT_LENGTH] = {
 0.037000, 0.052771, 0.084629, 0.130832, 0.188328, 0.253307, 0.322092, 0.391888, 0.461043, 0.528814,
 0.594912, 0.659118, 0.721086, 0.780312, 0.836206, 0.888165, 0.935595, 0.977879, 1.014357, 1.044349,
@@ -73,6 +100,7 @@ double R_knee[GAIT_LENGTH] = {
 0.244510, 0.227946, 0.210720, 0.191788, 0.169891, 0.144314, 0.115610, 0.085967, 0.059021, 0.039173
 };
 
+// Right Hip trajectory
 double R_hip[GAIT_LENGTH] = {
 0.330000, 0.331301, 0.335672, 0.343296, 0.353111, 0.363612, 0.373177, 0.380432, 0.384554, 0.385413,
 0.383465, 0.379469, 0.374125, 0.367799, 0.360427, 0.351604, 0.340792, 0.327532, 0.311585, 0.292979,
@@ -86,15 +114,19 @@ double R_hip[GAIT_LENGTH] = {
 0.327803, 0.335008, 0.341347, 0.346295, 0.349147, 0.349355, 0.346828, 0.342093, 0.336243, 0.330710
 };
 
+// Phase offset between legs (degrees-ish)
 int offset = 90;
 
-// Unique motor IDs (replace with actual IDs)
+// ---------- Unique motor IDs ----------
 const uint8_t MOTOR_ID_LEFT_HIP  = 0x03;
 const uint8_t MOTOR_ID_RIGHT_HIP = 0x01;
 const uint8_t MOTOR_ID_LEFT_KNEE = 0x04;
 const uint8_t MOTOR_ID_RIGHT_KNEE= 0x02;
 
-// ---------- helpers ----------
+// =========================================================
+// Helper: Convert float to fixed-width unsigned int
+// Used to pack MIT motor protocol fields
+// =========================================================
 static inline int float_to_uint(float x, float x_min, float x_max, unsigned int bits) {
   float span = x_max - x_min;
   if (x < x_min) x = x_min;
@@ -102,42 +134,56 @@ static inline int float_to_uint(float x, float x_min, float x_max, unsigned int 
   return (int)((x - x_min) * ((float)((1u << bits) - 1u) / span));
 }
 
-// drain RX for up to time_us microseconds; store latest by motor_id (broadcast-friendly)
+// =========================================================
+// Drain CAN RX buffer for a short time window
+// Purpose: avoid bus congestion and keep latest motor data
+// =========================================================
 static inline void drainRXUntil(uint32_t time_us) {
   const uint32_t t0 = micros();
   while (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
-    uint8_t motor_id = (uint8_t)(canMsg.can_id & 0xFF); // Drive ID in low 8 bits
+    uint8_t motor_id = (uint8_t)(canMsg.can_id & 0xFF);
+
     if (motor_id == MOTOR_ID_RIGHT_HIP)       memcpy(msgDataRightHip,  canMsg.data, 8);
     else if (motor_id == MOTOR_ID_RIGHT_KNEE) memcpy(msgDataRightKnee, canMsg.data, 8);
     else if (motor_id == MOTOR_ID_LEFT_KNEE)  memcpy(msgDataLeftKnee,  canMsg.data, 8);
     else if (motor_id == MOTOR_ID_LEFT_HIP)   memcpy(msgDataLeftHip,   canMsg.data, 8);
+
     if ((micros() - t0) >= time_us) break;
   }
 }
 
-// open accept-all filters and enable RXB0 rollover (BUKT) into RXB1
+// =========================================================
+// Open CAN filters to accept all traffic (broadcast mode)
+// =========================================================
 static inline void openAllFiltersAndRollover() {
   mcp2515.setFilterMask(MCP2515::MASK0, true, 0x00000000);
   mcp2515.setFilterMask(MCP2515::MASK1, true, 0x00000000);
+
   mcp2515.setFilter(MCP2515::RXF0, true, 0x00000000);
   mcp2515.setFilter(MCP2515::RXF1, true, 0x00000000);
   mcp2515.setFilter(MCP2515::RXF2, true, 0x00000000);
   mcp2515.setFilter(MCP2515::RXF3, true, 0x00000000);
   mcp2515.setFilter(MCP2515::RXF4, true, 0x00000000);
   mcp2515.setFilter(MCP2515::RXF5, true, 0x00000000);
-  // optional: enable rollover if your fork exposes it
-  // mcp2515.setRollover(true);
 }
 
+// =========================================================
+// Send command using MIT motor protocol over CAN
+// Controls:
+//   - position
+//   - velocity
+//   - kp, kd
+//   - feed-forward torque
+// =========================================================
 static inline void sendMITCommand(float p_des, float v_des, float kp, float kd, float t_ff, uint8_t motor_id) {
   int p_int  = float_to_uint(p_des, -12.56f, 12.56f, 16);
   int v_int  = float_to_uint(v_des, -33.0f, 33.0f, 12);
   int kp_int = float_to_uint(kp, 0.0f, 500.0f, 12);
   int kd_int = float_to_uint(kd, 0.0f, 5.0f,   12);
-  int t_int  = float_to_uint(t_ff, -54.0f, 54.0f, 12); //max is +-64Nm, but clamp to lower than max
+  int t_int  = float_to_uint(t_ff, -54.0f, 54.0f, 12);
 
-  const uint32_t can_id = ((uint32_t)0x08 << 8) | motor_id; // [28:8]=0x08, [7:0]=Drive ID
-  canMsg.can_id  = 0x80000000UL | can_id;   // Extended frame flag
+  const uint32_t can_id = ((uint32_t)0x08 << 8) | motor_id;
+  canMsg.can_id  = 0x80000000UL | can_id;   // Extended frame
   canMsg.can_dlc = 8;
 
   canMsg.data[0] = kp_int >> 4;
@@ -152,69 +198,75 @@ static inline void sendMITCommand(float p_des, float v_des, float kp, float kd, 
   mcp2515.sendMessage(&canMsg);
 }
 
+// =========================================================
+// Setup() — Runs once on boot
+// =========================================================
 void setup() {
-  Serial.begin(921600);   // faster serial to minimize blocking
+  Serial.begin(921600);
   SPI.begin();
 
   mcp2515.reset();
-  mcp2515.setBitrate(CAN_1000KBPS, MCP_8MHZ);  // 1 Mbps @ 8 MHz crystal (your hardware)
+  mcp2515.setBitrate(CAN_1000KBPS, MCP_8MHZ);
   openAllFiltersAndRollover();
   mcp2515.setNormalMode();
 
-  t0_us = esp_timer_get_time();   // <<< added: capture start timestamp
+  t0_us = esp_timer_get_time();   // Start time for logs
+
   delay(500);
   Serial.println("Multi-joint gait tracking started");
 }
 
+// =========================================================
+// Convert dial ADC value to speed state
+// =========================================================
 dialState getDialState(int dialValue) {
   int dialPercent = map(dialValue, 0, 4095, 0, 100);
+
   if (dialPercent < 25)  return DIAL_OFF;
   if (dialPercent < 50)  return DIAL_LOW;
   if (dialPercent < 75)  return DIAL_MEDIUM;
   return DIAL_HIGH;
 }
 
+// =========================================================
+// Main control loop
+// =========================================================
 void loop() {
-  // Common control params
+
+  // ---- Control constants ----
   const float v_des = 0.0f;
   const float kp = 40.0f;
   const float kd = 2.0f;
-  const float torque_ff_max_hip = 8.71875f; //LOW SETTINGS
-  const float torque_ff_max_knee = 4.98375f; 
 
-  // const float torque_ff_max_hip = 26.15625; //HIGH SETTINGS
-  // const float torque_ff_max_knee = 14.95125f;
-  
+  const float torque_ff_max_hip = 8.71875f;
+  const float torque_ff_max_knee = 4.98375f;
+
+  // Initial gait indices (left and right legs out of phase)
   int LgaitIndex = 0;
   int RgaitIndex = GAIT_LENGTH / 2;
-  
 
-  // Scale LgaitIndex (assume GAIT_LENGTH >= 100)
-  float rampFactor = (float)LgaitIndex / 100.0;  
-
-  // Clamp rampFactor between 0 and 1
+  // ---- Ramp torque for soft start ----
+  float rampFactor = (float)LgaitIndex / 100.0;
   if (rampFactor > 1.0) rampFactor = 1.0;
   if (rampFactor < 0.0) rampFactor = 0.0;
 
-  // Compute ramped torque_ff
-  float torque_ff_L_HIP = torque_ff_max_hip * rampFactor;
+  float torque_ff_L_HIP  = torque_ff_max_hip  * rampFactor;
   float torque_ff_L_KNEE = torque_ff_max_knee * rampFactor;
-  
-  
-  // Scale RgaitIndex (assume GAIT_LENGTH >= 100)
+
   rampFactor = (float)RgaitIndex / 100.0;
 
-  // Compute ramped torque_ff
-  float torque_ff_R_HIP = torque_ff_max_hip * rampFactor;
+  float torque_ff_R_HIP  = torque_ff_max_hip  * rampFactor;
   float torque_ff_R_KNEE = torque_ff_max_knee * rampFactor;
 
   delay(10);
 
+  // Read dial speed control
   int dialValue = analogRead(dialPin);
   dialState dial = getDialState(dialValue);
 
-  dial = DIAL_MEDIUM; // FOR NO DIAL
+  dial = DIAL_MEDIUM; // Forced speed when dial disabled
 
+  // -------- Wait until dial is not OFF --------
   while (dial == DIAL_OFF) {
     dialValue = analogRead(dialPin);
     dial = getDialState(dialValue);
@@ -222,82 +274,70 @@ void loop() {
 
   Serial.println("Moving legs to start");
 
-  // Move leg into position (with micro-gaps + RX drains to avoid burst collisions)
+  // =====================================================
+  // Phase 1: Smoothly move joints to start position
+  // =====================================================
   for (int i = 1; i < 20; i++) {
     int leftKnee  = (LgaitIndex + offset) % GAIT_LENGTH;
     int rightKnee = (RgaitIndex + offset) % GAIT_LENGTH;
 
-    float elapsed_time = esp_timer_get_time() - t0_us; 
-    float temp = pow(10, 6); //10 seconds in us
-    sendMITCommand(-(R_hip[LgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, -torque_ff_L_HIP * (i/20.0f), MOTOR_ID_LEFT_HIP);
+    sendMITCommand(-(R_hip[LgaitIndex] + 0.02f) * (i / 20.0f), v_des, kp, kd, -torque_ff_L_HIP * (i / 20.0f), MOTOR_ID_LEFT_HIP);
     delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand(-(R_knee[leftKnee] * 0.8f)   * (i/20.0f),  v_des, kp, kd, -torque_ff_L_KNEE * (i/20.0f), MOTOR_ID_LEFT_KNEE);
+    sendMITCommand(-(R_knee[leftKnee] * 0.8f) * (i / 20.0f), v_des, kp, kd, -torque_ff_L_KNEE * (i / 20.0f), MOTOR_ID_LEFT_KNEE);
     delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand( (R_hip[RgaitIndex] + 0.02f) * (i/20.0f),  v_des, kp, kd, torque_ff_R_HIP * (i/20.0f), MOTOR_ID_RIGHT_HIP);
+    sendMITCommand((R_hip[RgaitIndex] + 0.02f) * (i / 20.0f), v_des, kp, kd, torque_ff_R_HIP * (i / 20.0f), MOTOR_ID_RIGHT_HIP);
     delayMicroseconds(150); drainRXUntil(400);
 
-    sendMITCommand( (R_knee[rightKnee] * 0.8f)  * (i/20.0f),  v_des, kp, kd, torque_ff_R_KNEE * (i/20.0f), MOTOR_ID_RIGHT_KNEE);
+    sendMITCommand((R_knee[rightKnee] * 0.8f) * (i / 20.0f), v_des, kp, kd, torque_ff_R_KNEE * (i / 20.0f), MOTOR_ID_RIGHT_KNEE);
     delayMicroseconds(200); drainRXUntil(500);
 
     delay(10);
   }
-  
+
+  // =====================================================
+  // Phase 2: Continuous gait loop
+  // =====================================================
   while (dial != DIAL_OFF) {
-    int leftKnee = (LgaitIndex + offset) % GAIT_LENGTH;
+
+    int leftKnee  = (LgaitIndex + offset) % GAIT_LENGTH;
     int rightKnee = (RgaitIndex + offset) % GAIT_LENGTH;
 
-    dialValue = analogRead(dialPin);
-    dial = getDialState(dialValue);
+    // (Dial override disabled for testing)
+    dial = DIAL_MEDIUM;
 
-    dial = DIAL_MEDIUM; // FOR NO PETENTIOMETER
-
-    // if (dial == DIAL_OFF) {
-    //   break;
-    // }
-
+    // Send real-time gait joint commands
     sendMITCommand(-(R_hip[LgaitIndex]) * 1.3, v_des, kp, kd, -torque_ff_L_HIP, MOTOR_ID_LEFT_HIP);
     sendMITCommand(-(R_knee[leftKnee] * .7) * 1.3, v_des, kp, kd, -torque_ff_L_KNEE, MOTOR_ID_LEFT_KNEE);
     sendMITCommand((R_hip[RgaitIndex]) * 1.3, v_des, kp, kd, torque_ff_R_HIP, MOTOR_ID_RIGHT_HIP);
     sendMITCommand((R_knee[rightKnee] * .7) * 1.3, v_des, kp, kd, torque_ff_R_KNEE, MOTOR_ID_RIGHT_KNEE);
+
+    // Advance gait phase
     LgaitIndex = (LgaitIndex + 1) % GAIT_LENGTH;
     RgaitIndex = (RgaitIndex + 1) % GAIT_LENGTH;
-    if (LgaitIndex == 0) { 
-      maxAmp1 = 0;
-      maxAmp2 = 0;
-    }
 
-    int _delay = 20 + dial;
-    // if (LgaitIndex == 0) {
-    //   dial = DIAL_OFF; // FOR NO POTENTIOMETER
-    // }
+    // Read and store feedback from motors
     while (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
       decodeMotorFeedback(&canMsg);
     }
 
+    // Log data over Serial
     logGaitData(LgaitIndex, RgaitIndex);
 
+    // Delay controls walking speed (dial adds delay)
+    int _delay = 20 + dial;
     delay(_delay);
   }
-
-  //   // MOVE LEGS BACK TO ZERO
-  // Serial.println("Moving legs to zero");
-  // for (int i = 1; i < 20; i++) {
-  //   sendMITCommand(0,  v_des, kp, kd, -torque_ff, MOTOR_ID_LEFT_HIP);
-  //   sendMITCommand(0, v_des, kp, kd, -torque_ff, MOTOR_ID_LEFT_KNEE);
-  //   sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_HIP);
-  //   sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE);
-  //   delay(50);
-  // }  
-  // delay(200); // ~50 Hz control loop
-  // Serial.println("finished control loop, restarting");
 }
 
+// =========================================================
+// Decode incoming CAN motor feedback
+// =========================================================
 void decodeMotorFeedback(struct can_frame *msg) {
   if (msg->can_dlc < 8) return;
 
-  uint16_t motor_id = (uint16_t)(msg->can_id & 0xFF);   // Drive ID in low byte
+  uint16_t motor_id = (uint16_t)(msg->can_id & 0xFF);
 
   if (motor_id == MOTOR_ID_RIGHT_HIP)       memcpy(msgDataRightHip,  msg->data, 8);
   else if (motor_id == MOTOR_ID_RIGHT_KNEE) memcpy(msgDataRightKnee, msg->data, 8);
@@ -305,19 +345,25 @@ void decodeMotorFeedback(struct can_frame *msg) {
   else if (motor_id == MOTOR_ID_LEFT_HIP)   memcpy(msgDataLeftHip,   msg->data, 8);
 }
 
+// =========================================================
+// Log gait data to Serial with timestamps
+// =========================================================
 void logGaitData(int LgaitIndex, int RgaitIndex) {
-  // Header once (now includes Elapsed_us)
+
   if (gait_step_counter == 0) {
     Serial.println("TimeStep,Elapsed_us,L_Gait_Index,R_Gait_Index,RH[8],RK[8],LK[8],LH[8]");
   }
 
-  // decimate prints to reduce blocking (every 5th sample)
-  if ((gait_step_counter % 5) != 0) { gait_step_counter++; return; }
+  // Reduce serial load (log every 5th step)
+  if ((gait_step_counter % 5) != 0) { 
+    gait_step_counter++; 
+    return; 
+  }
 
-  int64_t elapsed_us = esp_timer_get_time() - t0_us;  // <<< added: device-side elapsed time
+  int64_t elapsed_us = esp_timer_get_time() - t0_us;
 
   Serial.print(gait_step_counter); Serial.print(",");
-  Serial.print((long long)elapsed_us); Serial.print(",");  // print 64-bit elapsed_us
+  Serial.print((long long)elapsed_us); Serial.print(",");
   Serial.print(LgaitIndex); Serial.print(",");
   Serial.print(RgaitIndex); Serial.print(",");
 
