@@ -41,6 +41,10 @@ Refer to the [`Docs/`](./Docs/) folder for:
 
 Refer to the README.md within [Control System/README.md](Control%20System/README.md)
 
+### Mechanical Systems Documentation
+
+Refer to the README.md within [Mechanical System/README.md](Mechanical%20System/README.md)
+
 ---
 
 ## Contributors
