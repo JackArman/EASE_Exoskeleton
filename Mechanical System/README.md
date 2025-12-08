@@ -31,10 +31,21 @@ Two springs are to be situate in the small circle cut outs and when exoskeleton 
 - Design an physical indicator when the elderly should stop walking into the docking station and unstrap
 - Current design has a 20 x 40 Rectangular Pole running in the middle - a tripping hazard for elderly
 
-# 🧓 Back and Arm rests
-### Description
-### Recommended improvements
+#💪 Back and Arm rests
 
-# Generic Recommended Action
+### Description
+The Back and Arm rests is a complicated system featuring multiple 3D printed components and a U joint to cater for the flexibility of a humans' hip joint.
+
+The following is a list of all files and descriptions:
+
+'Armrest Front Section L and R` - The front section of the armrest with cut out for potentiometer and emergency stop. Also potentiometer knob and visual dial.
+
+### Recommended improvements
+- Add padding on the backrests for more comfort
+- Better strap design as current design has some slipping
+- Better design so exoskeleton legs are closer to elderly's legs
+# General advice
 - Have a good plan at the start of every term to keep track of progress and outline dependancies
 - Have a agreed method of sharing files (like using this repositry or through Fusion's shared project spaces)
+- Good communication between design teams so integration is easy
+- Design with manufacturing process in mind (size of design, assembly, fasteners, manufacturing time)
