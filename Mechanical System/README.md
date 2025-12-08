@@ -17,6 +17,12 @@ The following is a list of all files and descriptions:
 `Docking Station Arm` - Arms that extend from the under the armrest to the backrest to support the backrest weight and ensure the exoskeleton's U-joint does not rotate and cause the exoskeleton to fall off. Has a section cut off from it for the weight based locking mechanism. 
 Two springs are to be situate in the small circle cut outs and when exoskeleton rest upon it, the piece's extrusion at the bottom hits the stopper, preventing the hinge to return to its original position.
 
+`Ramp fitting` - Ramp to stop the hinge from overturning.
+
+`Returning Hinge` - Inaccurate CAD of TruClose® Self-Closing Pool Gate Safety Hinges but with joint added for demonstration.
+
+`Spring Stopper` - Attachment to pole that works with the spring system on the `Docking Station Arm`s to stop the hinge from returning when exoskeleton is on it.
+
 `Vslot Corner joint` - The joint that is used to construct the Vslot frame.
 ### Recommended improvements
 - Redesign or reprint a stronger `armrest motor mount`
