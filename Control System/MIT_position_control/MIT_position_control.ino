@@ -329,6 +329,20 @@ void loop() {
     int _delay = 20 + dial;
     delay(_delay);
   }
+
+  // Move legs back to zero position (neutral) after gait loop
+Serial.println("Moving legs to zero");
+for (int i = 1; i < 20; i++) {  // Gradually move back to the rest state in 20 small steps
+    sendMITCommand(0, v_des, kp, kd, -torque_ff, MOTOR_ID_LEFT_HIP);
+    sendMITCommand(0, v_des, kp, kd, -torque_ff, MOTOR_ID_LEFT_KNEE);
+    sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_HIP);
+    sendMITCommand(0, v_des, kp, kd, torque_ff, MOTOR_ID_RIGHT_KNEE);
+    
+    delay(50);  // Wait 50 ms between steps for smooth motion
+}
+
+delay(200);  // Extra delay to ensure all motors have reached zero
+Serial.println("Finished moving legs to zero, restarting control loop");
 }
 
 // =========================================================
